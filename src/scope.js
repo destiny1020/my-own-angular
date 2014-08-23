@@ -255,3 +255,116 @@ Scope.prototype.$destroy = function() {
         siblings.splice(indexOfThis, 1);
     }
 };
+
+Scope.prototype.$watchCollection = function(watchFn, listenerFn) {
+    var self = this;
+    var newValue, oldValue;
+    var oldLength;
+    var veryOldValue;
+    // only track the old value when the listenerFn declares 'oldValue' as argument
+    var trackVeryOldValue = (listenerFn.length > 1);
+    var changeCount = 0;
+    var firstRun = true;
+
+    var internalWatchFn = function(scope) {
+        var key, newLength;
+        newValue = watchFn(scope);
+
+        if(_.isObject(newValue)) {
+            if(_.isArrayLike(newValue)) {
+                if(!_.isArray(oldValue)) {
+                    // sync up with type information
+                    oldValue = [];
+                    changeCount++;
+                }
+
+                if(newValue.length !== oldValue.length) {
+                    changeCount++;
+                    // sync up the length information
+                    oldValue.length = newValue.length;
+                }
+
+                // iterating over each element
+                _.forEach(newValue, function(newItem, i) {
+                    // handle NaNs
+                    var bothNaN = _.isNaN(newItem) && _.isNaN(oldValue[i]);
+                    if(!bothNaN && newItem !== oldValue[i]) {
+                        changeCount++;
+                        // sync up for each element
+                        oldValue[i] = newItem;
+                    }
+                });
+            } else {
+                // when the value is object other than array
+                if(!_.isObject(oldValue) || _.isArrayLike(oldValue)) {
+                    changeCount++;
+                    oldValue = {};
+                    // keep the old object's size
+                    oldLength = 0;
+                }
+
+                // reset the new object's size
+                newLength = 0;
+                // field checking
+                _.forOwn(newValue, function(newVal, key) {
+                    newLength++;
+                    // check whether old value has such key
+                    if(oldValue.hasOwnProperty(key)) {
+                        // use strict value checking for attributes
+                        // handle NaNs
+                        var bothNaN = _.isNaN(newVal) && _.isNaN(oldValue[key]);
+                        if(!bothNaN && oldValue[key] !== newVal) {
+                            changeCount++;
+                            // sync up for each attribute
+                            oldValue[key] = newVal;
+                        }
+                    } else {
+                        changeCount++;
+                        oldLength++;
+                        // sync up for the newly added attr
+                        oldValue[key] = newVal;
+                    }
+                });
+
+                // launch into second loop only when the oldLength > newLength
+                if(oldLength > newLength) {
+                    changeCount++;
+                    // second loop for checking whether any attr is removed
+                    _.forOwn(oldValue, function(oldVal, key) {
+                        // the field is not exist on new value now
+                        if(!newValue.hasOwnProperty(key)) {
+                            // update the oldLength info
+                            oldLength--;
+                            // sync up for the removed attribute
+                            delete oldValue[key];
+                        }
+                    });
+                }
+            }
+        } else {
+            // when the values are primitives
+            if(!self.$$areEqual(newValue, oldValue, false)) {
+                changeCount++;
+            }
+            oldValue = newValue;
+        }
+
+        return changeCount;
+    };
+
+    var internalListenerFn = function() {
+        if(firstRun) {
+            listenerFn(newValue, newValue, self);
+            firstRun = false;
+        } else {
+            listenerFn(newValue, veryOldValue, self);
+        }
+
+        // TODO: for the first round, the oldValue is undefined
+        if(trackVeryOldValue) {
+            veryOldValue = _.clone(newValue);
+        }
+    };
+
+    return this.$watch(internalWatchFn, internalListenerFn);
+};
