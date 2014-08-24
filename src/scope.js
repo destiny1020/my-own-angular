@@ -9,6 +9,7 @@ function Scope() {
     this.$$postDigestQueue = [];
     this.$$children = [];
     this.$$root = this;
+    this.$$listeners = {};
 }
 
 // to make sure the value 'last' is not equal to any other value
@@ -230,6 +231,9 @@ Scope.prototype.$new = function(isolated) {
     // add current child into parent's children array
     this.$$children.push(child);
 
+    // assign array for listeners
+    child.$$listeners = {};
+
     return child;
 };
 
@@ -252,6 +256,7 @@ Scope.prototype.$destroy = function() {
     var siblings = this.$parent.$$children;
     var indexOfThis = siblings.indexOf(this);
     if(indexOfThis >= 0) {
+        this.$broadcast("$destroy");
         siblings.splice(indexOfThis, 1);
     }
 };
@@ -367,4 +372,94 @@ Scope.prototype.$watchCollection = function(watchFn, listenerFn) {
     };
 
     return this.$watch(internalWatchFn, internalListenerFn);
+};
+
+Scope.prototype.$on = function(eventName, listener) {
+    var listeners = this.$$listeners[eventName];
+
+    if(!listeners) {
+        this.$$listeners[eventName] = listeners = [];
+    }
+    listeners.push(listener);
+
+    // just like watch, returned a function for de-register event
+    return function() {
+        var index = listeners.indexOf(listener);
+        if(index >= 0) {
+            // make it candidate for removing
+            listeners[index] = null;
+        }
+    };
+};
+
+Scope.prototype.$emit = function(eventName) {
+    var propagationStopped = false;
+    var event = {
+        name: eventName, 
+        targetScope: this,
+        stopPropagation: function() {
+            propagationStopped = true;
+        },
+        defaultPrevented: false,
+        preventDefault: function() {
+            this.defaultPrevented = true;
+        }
+    };
+    var additionalArgs = _.rest(arguments);
+    var listenerArgs = [event].concat(additionalArgs);
+
+    // propagates event up to root
+    var scope = this;
+    do {
+        event.currentScope = scope;
+        scope.$$fireEventOnScope(eventName, listenerArgs);
+        scope = scope.$parent;
+    } while(scope && !propagationStopped);
+
+    // make sure to return the same event
+    return event;
+};
+
+Scope.prototype.$broadcast = function(eventName) {
+    var event = {
+        name: eventName,
+        targetScope: this,
+        defaultPrevented: false,
+        preventDefault: function() {
+            this.defaultPrevented = true;
+        }
+    };
+    var additionalArgs = _.rest(arguments);
+    var listenerArgs = [event].concat(additionalArgs);
+
+    // propagates event down the tree
+    this.$$everyScope(function(scope) {
+        event.currentScope = scope;
+        scope.$$fireEventOnScope(eventName, listenerArgs);
+        // always fire event on each scope
+        return true;
+    });
+
+    // make sure to return the same event
+    return event;
+};
+
+Scope.prototype.$$fireEventOnScope = function(eventName, listenerArgs) {
+    var listeners = this.$$listeners[eventName] || [];
+
+    // iterating over the listeners
+    var i = 0;
+    while(i < listeners.length) {
+        if(listeners[i] === null) {
+            // remove the listener
+            listeners.splice(i, 1);
+        } else {
+            try {
+                listeners[i].apply(null, listenerArgs);
+            } catch (e) {
+                console.error(e);
+            }
+            i++;
+        }
+    }
 };
