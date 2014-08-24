@@ -1797,4 +1797,68 @@ describe("Scope", function() {
 
     });
 
+    describe("integrate parse in", function() {
+
+        var scope;
+
+        beforeEach(function() {
+            scope = new Scope();
+        });
+
+        it("accepts expr for watch function", function() {
+            var theValue;
+
+            scope.$watch("1", function(newValue, oldValue, scope) {
+                theValue = newValue;
+            });
+
+            scope.$digest();
+
+            expect(theValue).toBe(1);
+        });
+
+        // since for constant watch, it will never become dirty again
+        it("removes constant watches after first invocation", function() {
+            scope.$watch("42", function(){ });
+            scope.$digest();
+
+            expect(scope.$$watchers.length).toBe(0);
+        });
+
+        it("accepts expr for listener function in watch without throwing exception", function() {
+            scope.$watch("42", "'fourty-two'");
+            scope.$digest();
+        });
+
+        it("accepts expr for watch collection func", function() {
+            var theValue;
+
+            scope.$watchCollection('[1, 2, 3]', function(newValue, oldValue, scope) {
+                theValue = newValue;
+            });
+
+            scope.$digest();
+            expect(theValue).toEqual([1, 2, 3]);
+        });
+
+        it("accepts expr for listener function in watch collection without throwing exception", function() {
+            scope.$watchCollection("[1, 2, 3]", "'one-two-three'");
+            scope.$digest();
+        });
+
+        it("accepts expr in $eval", function() {
+            expect(scope.$eval("42")).toBe(42);
+        });
+
+        it("accepts expr in $apply", function() {
+            expect(scope.$apply("42")).toBe(42);
+        });
+
+        it("accepts expr in $evalAsync", function(done) {
+            scope.$evalAsync("42");
+            scope.$$postDigest(done);
+        });
+
+    });
+
 });
