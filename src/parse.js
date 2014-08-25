@@ -49,7 +49,7 @@ Lexer.prototype.lex = function(text) {
             this.readNumber();
         } else if(this.is("'\"")){
             this.readString(this.ch);
-        } else if(this.is("[],{}:")) {
+        } else if(this.is("[],{}:.()")) {
             // no fn correlated with the token
             this.tokens.push({
                 text: this.ch,
@@ -173,7 +173,7 @@ Lexer.prototype.readIdent = function() {
     var text = "";
     while(this.index < this.text.length) {
         var ch = this.text.charAt(this.index);
-        if(this.isIdent(ch) || this.isNumber(ch)) {
+        if(ch === "." || this.isIdent(ch) || this.isNumber(ch)) {
             text += ch;
         } else {
             break;
@@ -188,9 +188,64 @@ Lexer.prototype.readIdent = function() {
     if(OPERATORS.hasOwnProperty(text)) {
         token.fn = OPERATORS[text];
         token.json = true;
+    } else {
+        // if the text is not built-in identifier, try to access scope
+        token.fn = getterFn(text);
     }
 
     this.tokens.push(token);
+};
+
+var getterFn = _.memoize(function(ident) {
+    var pathKeys = ident.split(".");
+    if(pathKeys.length === 1) {
+        return simpleGetterFn1(pathKeys[0]);
+    } else if(pathKeys.length === 2){
+        return simpleGetterFn2(pathKeys[0], pathKeys[1]);
+    } else {
+        // more nested case
+        return generatedGetterFn(pathKeys);
+    }
+});
+
+var simpleGetterFn1 = function(key) {
+    return function(scope, locals) {
+        // return undefined once the scope is undefined. no matter what locals is
+        if(!scope) {
+            return undefined;
+        }
+        return (locals && locals.hasOwnProperty(key)) ? locals[key] : scope[key];
+    };
+};
+
+var simpleGetterFn2 = function(key1, key2) {
+    return function(scope, locals) {
+        if(!scope) {
+            return undefined;
+        }
+        // drill down the scope object
+        scope = (locals && locals.hasOwnProperty(key1)) ? locals[key1] : scope[key1];
+        return scope ? scope[key2] : undefined;
+    };
+};
+
+var generatedGetterFn = function(keys) {
+    var code = "";
+    _.forEach(keys, function(key, idx) {
+        code += "if (!scope) { return undefined; }\n";
+
+        if(idx === 0) {
+            code += "scope = (locals && locals.hasOwnProperty('" + key +"')) ? " +
+                "locals['" + key + "'] : " +
+                "scope['" + key + "'];\n";
+        } else {
+            code += "scope = scope['"+ key + "'];\n";
+        }
+    });
+    code += "return scope;\n";
+    /* jshint -W054 */
+    return new Function("scope", "locals", code);
+    /* jshint +W054 */
 };
 
 Lexer.prototype.peek = function() {
@@ -230,6 +285,8 @@ Parser.prototype.parse = function(text) {
 
 Parser.prototype.primary = function() {
     var primary;
+
+    // beginning token
     if(this.expect("[")) {
         primary = this.arrayDeclaration();
     } else if(this.expect("{")) {
@@ -242,21 +299,80 @@ Parser.prototype.primary = function() {
             primary.literal = true;
         }
     }
+
+    // non-beginning token, prop access, e.g. anArray[idx]
+    // replace if by while: in case, anObject["key1"]["key2"]
+    var next;
+    while((next = this.expect("[", ".", "("))) {
+        if(next.text === "[") {
+            primary = this.objectIndex(primary);
+        } else if(next.text === ".") {
+            primary = this.fieldAccess(primary);
+        } else if(next.text === "(") {
+            primary = this.functionCall(primary);
+        }
+    }
+
     return primary;
 };
 
-Parser.prototype.expect = function(e) {
-    var token = this.peek(e);
+Parser.prototype.objectIndex = function(objFn) {
+    // since the content in [] is another primary expr, invoke recursively
+    var indexFn = this.primary();
+    this.consume("]");
+
+    return function(scope, locals) {
+        var obj = objFn(scope, locals);
+        var index = indexFn(scope, locals);
+
+        return obj[index];
+    };
+};
+
+Parser.prototype.fieldAccess = function(objFn) {
+    // the token.fn after the "."
+    var getter = this.expect().fn;
+    return function(scope, locals) {
+        var obj = objFn(scope, locals);
+        return getter(obj);
+    };
+};
+
+Parser.prototype.functionCall = function(fnFn) {
+    var argFns = [];
+    if(!this.peek(")")) {
+        do {
+            argFns.push(this.primary());
+        } while(this.expect(","));
+    }
+    this.consume(")");
+    return function(scope, locals) {
+        // resolve the function itself
+        var fn = fnFn(scope, locals);
+
+        // prepare all the arguments
+        var args = _.map(argFns, function(argFn) {
+            return argFn(scope, locals);
+        });
+
+        // call it
+        return fn.apply(null, args);
+    };
+};
+
+Parser.prototype.expect = function(e1, e2, e3, e4) {
+    var token = this.peek(e1, e2, e3, e4);
     if(token) {
         return this.tokens.shift();
     }
 };
 
-Parser.prototype.peek = function(e) {
+Parser.prototype.peek = function(e1, e2, e3, e4) {
     if(this.tokens.length > 0) {
         var text = this.tokens[0].text;
         // when e is declared, return only when matched
-        if(text === e || !e) {
+        if(text === e1 || text === e2 || text === e3 || text === e4 || 
+            (!e1 && !e2 && !e3 && !e4)) {
             // just return, not consume the token
             return this.tokens[0];
         }
