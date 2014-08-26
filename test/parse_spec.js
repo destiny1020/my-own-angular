@@ -391,4 +391,277 @@ describe("parse", function() {
         })).toBe(42);
     });
 
+    it("does not allow calling the function constructor", function() {
+        expect(function() {
+            var fn = parse("aFunction.constructor('return window;')()");
+        }).toThrow();
+    });
+
+    it("does not allow accessing __proto__", function() {
+        expect(function() {
+            var fn = parse("obj.__proto__");
+            fn({obj: { }});
+        }).toThrow();
+    });
+
+    it("does not allow calling __defineGetter__", function() {
+        expect(function() {
+            var fn = parse("obj.__defineGetter__('evil', fn)");
+            fn({obj: { }, fn: function() { }});
+        }).toThrow();
+    });
+
+    it("does not allow calling __defineSetter__", function() {
+        expect(function() {
+            var fn = parse("obj.__defineSetter__('evil', fn)");
+            fn({obj: { }, fn: function() { }});
+        }).toThrow();
+    });
+
+    it("does not allow calling __lookupGetter__", function() {
+        expect(function() {
+            var fn = parse("obj.__lookupGetter__('evil', fn)");
+            fn({obj: { }, fn: function() { }});
+        }).toThrow();
+    });
+
+    it("does not allow calling __lookupSetter__", function() {
+        expect(function() {
+            var fn = parse("obj.__lookupSetter__('evil', fn)");
+            fn({obj: { }, fn: function() { }});
+        }).toThrow();
+    });
+
+    it("calls functions accessed as prop with the correct this - bracket", function() {
+        var scope = {
+            anObject: {
+                aMember: 1,
+                aFunction: function() {
+                    return this.aMember;
+                }
+            }
+        };
+
+        var fn = parse("anObject['aFunction']()");
+        expect(fn(scope)).toBe(1);
+    });
+
+    it("calls functions accessed as field with the correct this - dot", function() {
+        var scope = {
+            anObject: {
+                aMember: 1,
+                aFunction: function() {
+                    return this.aMember;
+                }
+            }
+        };
+
+        var fn = parse("anObject.aFunction()");
+        expect(fn(scope)).toBe(1);
+    });
+
+    it("calls method with whitespace before function call", function() {
+        var scope = {
+            anObject: {
+                aMember: 1,
+                aFunction: function() {
+                    return this.aMember;
+                }
+            }
+        };
+
+        var fn = parse("anObject.aFunction   ()");
+        expect(fn(scope)).toBe(1);
+    });
+
+    it("clears the this context on function calls", function() {
+        var scope = {
+            anObject: {
+                aMember: 1,
+                aFunction: function() {
+                    return function() {
+                        return this.aMember;
+                    };
+                }
+            }
+        };
+
+        var fn = parse("anObject.aFunction()()");
+        expect(fn(scope)).toBeUndefined();
+    });
+
+    // ensuring safe objects
+    it("does not allow accessing window as property", function() {
+        var fn = parse("anObject['wnd']");
+
+        expect(function() { fn({ anObject: { wnd: window } }); }).toThrow();
+    });
+
+    it("does not allow calling functions of window", function() {
+        var fn = parse("wnd.scroll(500, 0)");
+
+        expect(function() { fn({wnd: window}); }).toThrow();
+    });
+
+    it("does not allow functions to return window", function() {
+        var fn = parse("getWnd()");
+
+        expect(function() { fn({getWnd: _.constant(window)}); }).toThrow();
+    });
+
+    it("does not allow calling functions on DOM elements", function() {
+        var fn = parse("el.setAttribute('evil', 'true')");
+
+        expect(function() { fn({el: document.documentElement}); }).toThrow();
+    });
+
+    it("does not allow calling the aliased function constructor", function() {
+        var fn = parse("fnConstructor('return window;')");
+
+        expect(function() {
+            fn({fnConstructor: function(){}.constructor});
+        }).toThrow();
+    });
+
+    it("does not allow calling functions on Object", function() {
+        var fn = parse("obj.create({})");
+
+        expect(function() {
+            fn({obj: Object});
+        }).toThrow();
+    });
+
+    // ensuring safe functions, disallow call, apply and bind
+    it("does not allow calling call", function() {
+        var fn = parse("func.call(obj)");
+
+        expect(function() {
+            fn({func: function(){}, obj: {}});
+        }).toThrow();
+    });
+
+    it("does not allow calling apply", function() {
+        var fn = parse("func.apply(obj)");
+
+        expect(function() {
+            fn({func: function(){}, obj: {}});
+        }).toThrow();
+    });
+
+    it("does not allow calling bind", function() {
+        var fn = parse("func.bind(obj)");
+
+        expect(function() {
+            fn({func: function(){}, obj: {}});
+        }).toThrow();
+    });
+
+    // assign values
+    it("parses a simple attribute assignment", function() {
+        var fn = parse("anAttribute = 1");
+        var scope = {};
+        fn(scope);
+
+        expect(scope.anAttribute).toBe(1);
+    });
+
+    it("can assign any primary expression", function() {
+        var fn = parse("anAttribute = aFunction()");
+        var scope = {aFunction: _.constant(1)};
+        fn(scope);
+
+        expect(scope.anAttribute).toBe(1);
+    });
+
+    it("parses a nested attribute assignment", function() {
+        var fn = parse("anObject.anAttribute = 1");
+        var scope = {anObject: {}};
+        fn(scope);
+
+        expect(scope.anObject.anAttribute).toBe(1);
+    });
+
+    it("creates the objects in the setter path that do not exist", function() {
+        var fn = parse("some.nested.path = 1");
+        var scope = {};
+        fn(scope);
+
+        expect(scope.some.nested.path).toBe(1);
+    });
+
+    it("parses an assignment through attribute access", function() {
+        var fn = parse("anObject['anAttribute'] = 1");
+        var scope = {anObject: {}};
+        fn(scope);
+
+        expect(scope.anObject.anAttribute).toBe(1);
+    });
+
+    it("parses assignment through field access after bracket access", function() {
+        var fn = parse("anObject['anAttribute'].nested = 2");
+        var scope = {anObject: {anAttribute: {}}};
+        fn(scope);
+
+        expect(scope.anObject.anAttribute.nested).toBe(2);
+    });
+
+    // arrays and objects revisited
+    it("parses an array with non-literals", function() {
+        var fn = parse("[a, b, c()]");
+
+        expect(fn({a: 1, b: 2, c: _.constant(3)})).toEqual([1, 2, 3]);
+    });
+
+    it("parses an object with non-literals", function() {
+        var fn = parse("{a: a, b: obj.c()}");
+
+        expect(fn({
+            a: 1,
+            obj: {
+                b: _.constant(2),
+                c: function() {
+                    return this.b();
+                }
+            }
+        })).toEqual({a: 1, b: 2});
+    });
+
+    it("makes array constant when they only contain constants", function() {
+        var fn = parse("[1, 2, 3, [4]]");
+
+        expect(fn.constant).toBe(true);
+    });
+
+    it("makes array non-constant when they contain non-constants", function() {
+        expect(parse("[1, 2, a]").constant).toBe(false);
+        expect(parse("[1, 2, [[[[[a]]]]]]").constant).toBe(false);
+    });
+
+    it("makes objects constant when they only contain constants", function() {
+        var fn = parse("{a: 1, b: {c: 3}}");
+
+        expect(fn.constant).toBe(true);
+    });
+
+    it("makes objects non-constant when they contain non-constant", function() {
+        expect(parse("{a: 1, b: c}").constant).toBe(false);
+        expect(parse("{a: 1, b: {c: 1, d: e}}").constant).toBe(false);
+    });
+
+    it("allows an array element to be an assignment", function() {
+        var fn = parse("[a = 1]");
+        var scope = {};
+
+        expect(fn(scope)).toEqual([1]);
+        expect(scope.a).toBe(1);
+    });
+
+    it("allows an object value to be an assignment", function() {
+        var fn = parse("{a: b = 1}");
+        var scope = {};
+
+        expect(fn(scope)).toEqual({a: 1});
+        expect(scope.b).toBe(1);
+    });
+
 });

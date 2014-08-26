@@ -17,6 +17,10 @@ var OPERATORS = {
     "false": _.constant(false)
 };
 
+var CALL = Function.prototype.call;
+var APPLY = Function.prototype.apply;
+var BIND = Function.prototype.bind;
+
 function parse(expr) {
     switch(typeof expr) {
         case "string":
@@ -49,11 +53,11 @@ Lexer.prototype.lex = function(text) {
             this.readNumber();
         } else if(this.is("'\"")){
             this.readString(this.ch);
-        } else if(this.is("[],{}:.()")) {
+        } else if(this.is("[],{}:.()=")) {
             // no fn correlated with the token
             this.tokens.push({
                 text: this.ch,
-                json: true,
+                json: false,
             });
             this.index++;
         } else if(this.isIdent(this.ch)){
@@ -171,14 +175,36 @@ Lexer.prototype.readString = function(quote) {
 
 Lexer.prototype.readIdent = function() {
     var text = "";
+    // keep two indices, in order to split the token into parts when met invocation "()""
+    var start = this.index;
+    var lastDotAt;
     while(this.index < this.text.length) {
         var ch = this.text.charAt(this.index);
         if(ch === "." || this.isIdent(ch) || this.isNumber(ch)) {
+            if(ch === ".") {
+                lastDotAt = this.index;
+            }
             text += ch;
         } else {
             break;
         }
         this.index++;
+    }
+
+    // two requirements for identifying invocation
+    // 1. there must have been a dot in the token
+    // 2. first character after the token must be an opening parenthesis
+    var methodName;
+    if(lastDotAt) {
+        var peekIndex = this.index;
+        // ignore the possible whitespace between method token and left parenthesis
+        while(this.isWhitespace(this.text.charAt(peekIndex))) {
+            peekIndex++;
+        }
+        if(this.text.charAt(peekIndex) === "(") {
+            methodName = text.substring(lastDotAt - start + 1);
+            text = text.substring(0, lastDotAt - start);
+        }
     }
 
     var token = {
@@ -191,9 +217,42 @@ Lexer.prototype.readIdent = function() {
     } else {
         // if the text is not built-in identifier, try to access scope
         token.fn = getterFn(text);
+        // let them could be assigned
+        token.fn.assign = function(self, value) {
+            return setter(self, text, value);
+        };
     }
 
     this.tokens.push(token);
+
+    // emit 3 tokens in total if it is a method invocation
+    if(methodName) {
+        this.tokens.push({
+            text: ".",
+            json: false
+        });
+        this.tokens.push({
+            text: methodName,
+            fn: getterFn(methodName),
+            json: false
+        });
+    }
+};
+
+var setter = function(object, path, value) {
+    var keys = path.split(".");
+    while(keys.length > 1) {
+        var key = keys.shift();
+        ensureSafeMemberName(key);
+        // create new object if not exist
+        if(!object.hasOwnProperty(key)) {
+            object[key] = {};
+        }
+        object = object[key];
+    }
+    // TODO, expr like "anObject['anAttribute'].nested = 2" will not create intermediate objects on the fly?
+    object[keys.shift()] = value;
+    return value;
 };
 
 var getterFn = _.memoize(function(ident) {
@@ -208,7 +267,49 @@ var getterFn = _.memoize(function(ident) {
     }
 });
 
+var ensureSafeObject = function(obj) {
+    if(obj) {
+        if(obj.document && obj.location && obj.alert && obj.setInterval) {
+            // check whether the obj is window
+            throw "Referencing window in Angular Expression is forbidden";
+        } else if(obj.children && 
+            (obj.nodeName || (obj.prop && obj.attr && obj.find))) {
+            throw "Referencing DOM nodes in Angular Expression is forbidden";
+        } else if(obj.getOwnPropertyNames || obj.getOwnPropertyDescriptor) {
+            throw "Referencing Object in Angular Expression is forbidden";
+        }
+    }
+
+    return obj;
+};
+
+var ensureSafeFunction = function(obj) {
+    if(obj) {
+        if(obj.constructor === obj) {
+            // the function constructor is also a function, so it will also have
+            // a constructor property, one that points to itself
+            throw "Referencing Function in Angular Expression is forbidden";
+        } else if(obj === CALL || obj === APPLY || obj === BIND) {
+            throw "Referencing call, apply or bind in Angular Expression is forbidden";
+        }
+    }
+
+    return obj;
+};
+
+var ensureSafeMemberName = function(name) {
+    if(name === "constructor" ||
+        name === "__proto__" ||
+        name === "__defineGetter__" ||
+        name === "__defineSetter__" ||
+        name === "__lookupGetter__" ||
+        name === "__lookupSetter__") {
+        throw "Referencing 'constructor' field in expr is forbidden";
+    }
+};
+
 var simpleGetterFn1 = function(key) {
+    ensureSafeMemberName(key);
     return function(scope, locals) {
         // return undefined once the scope is undefined. no matter what locals is
         if(!scope) {
@@ -219,6 +320,8 @@ var simpleGetterFn1 = function(key) {
 };
 
 var simpleGetterFn2 = function(key1, key2) {
+    ensureSafeMemberName(key1);
+    ensureSafeMemberName(key2);
     return function(scope, locals) {
         if(!scope) {
             return undefined;
@@ -232,6 +335,7 @@ var simpleGetterFn2 = function(key1, key2) {
 var generatedGetterFn = function(keys) {
     var code = "";
     _.forEach(keys, function(key, idx) {
+        ensureSafeMemberName(key);
         code += "if (!scope) { return undefined; }\n";
 
         if(idx === 0) {
@@ -280,7 +384,7 @@ function Parser(lexer) {
 Parser.prototype.parse = function(text) {
     // tokenize the text
     this.tokens = this.lexer.lex(text);
-    return this.primary();
+    return this.assignment();
 };
 
 Parser.prototype.primary = function() {
@@ -303,13 +407,19 @@ Parser.prototype.primary = function() {
     // non-beginning token, prop access, e.g. anArray[idx]
     // replace if by while: in case, anObject["key1"]["key2"]
     var next;
+    var context;
     while((next = this.expect("[", ".", "("))) {
         if(next.text === "[") {
+            context = primary;
             primary = this.objectIndex(primary);
         } else if(next.text === ".") {
+            context = primary;
             primary = this.fieldAccess(primary);
         } else if(next.text === "(") {
-            primary = this.functionCall(primary);
+            primary = this.functionCall(primary, context);
+
+            // clear the contxt info after an invocation
+            context = undefined;
         }
     }
 
@@ -321,24 +431,42 @@ Parser.prototype.objectIndex = function(objFn) {
     var indexFn = this.primary();
     this.consume("]");
 
-    return function(scope, locals) {
+    var objectIndexFn = function(scope, locals) {
         var obj = objFn(scope, locals);
         var index = indexFn(scope, locals);
 
-        return obj[index];
+        // check the whether the referenced object is safe or not
+        return ensureSafeObject(obj[index]);
     };
+
+    // objectIndexFn should have the assign fn
+    objectIndexFn.assign = function(self, value, locals) {
+        var obj = ensureSafeObject(objFn(self, locals));
+        var index = indexFn(self, locals);
+        return (obj[index] = value);
+    };
+
+    return objectIndexFn;
 };
 
 Parser.prototype.fieldAccess = function(objFn) {
     // the token.fn after the "."
-    var getter = this.expect().fn;
-    return function(scope, locals) {
+    var token = this.expect();
+    var getter = token.fn;
+    var fieldAccessFn = function(scope, locals) {
         var obj = objFn(scope, locals);
         return getter(obj);
     };
+
+    fieldAccessFn.assign = function(self, value, locals) {
+        var obj = objFn(self, locals);
+        return setter(obj, token.text, value);
+    };
+
+    return fieldAccessFn;
 };
 
-Parser.prototype.functionCall = function(fnFn) {
+Parser.prototype.functionCall = function(fnFn, contextFn) {
     var argFns = [];
     if(!this.peek(")")) {
         do {
@@ -347,8 +475,14 @@ Parser.prototype.functionCall = function(fnFn) {
     }
     this.consume(")");
     return function(scope, locals) {
+        // resolve the context, if not exist, use scope
+        // at the same time, check the whether the context is safe or not
+        var context = ensureSafeObject(contextFn ? contextFn(scope, locals) : scope);
+
         // resolve the function itself
-        var fn = fnFn(scope, locals);
+        // at the same time, check whether the fn is safe or not
+        var fn = ensureSafeFunction(fnFn(scope, locals));
+        // var fn = fnFn(scope, locals);
 
         // prepare all the arguments
         var args = _.map(argFns, function(argFn) {
@@ -356,7 +490,8 @@ Parser.prototype.functionCall = function(fnFn) {
         });
 
         // call it
-        return fn.apply(null, args);
+        // at the same time, check the whether the result is safe or not
+        return ensureSafeObject(fn.apply(context, args));
     };
 };
 
@@ -394,21 +529,23 @@ Parser.prototype.arrayDeclaration = function() {
             if(this.peek("]")) {
                 break;
             }
-            elementFns.push(this.primary());
+            elementFns.push(this.assignment());
         } while(this.expect(","));
     }
 
     this.consume("]");
 
-    var arrayFn = function() {
+    var arrayFn = function(scope, locals) {
         // map an array will result in another array
         return _.map(elementFns, function(elementFn) {
-            return elementFn();
+            return elementFn(scope, locals);
         });
     };
 
     arrayFn.literal = true;
-    arrayFn.constant = true;
+
+    // determine whether is constant
+    arrayFn.constant = _.every(elementFns, "constant");
 
     return arrayFn;
 };
@@ -420,7 +557,7 @@ Parser.prototype.object = function() {
             var keyToken = this.expect();
             this.consume(":");
             // since value could be any other expression, recursively call primary
-            var valueExpr = this.primary();
+            var valueExpr = this.assignment();
             keyValues.push({
                 // first check string, then fall back on text
                 key: keyToken.string || keyToken.text,
@@ -430,18 +567,34 @@ Parser.prototype.object = function() {
     }
 
     this.consume("}");
-    var objectFn = function() {
+    var objectFn = function(scope, locals) {
         var object = {};
         _.forEach(keyValues, function(kv) {
             // call the value fn to get the real content
-            object[kv.key] = kv.value();
+            object[kv.key] = kv.value(scope, locals);
         });
 
         return object;
     };
 
-    objectFn.constant = true;
     objectFn.literal = true;
+    // determine whether is constant
+    objectFn.constant = _(keyValues).pluck("value").every("constant");
 
     return objectFn;
+};
+
+Parser.prototype.assignment = function() {
+    var left = this.primary();
+    if(this.expect("=")) {
+        if(!left.assign) {
+            throw "Assignment cannot be done since operator is not assignable";
+        }
+        var right = this.primary();
+        return function(scope, locals) {
+            return left.assign(scope, right(scope, locals), locals);
+        };
+    }
+
+    return left;
 };
