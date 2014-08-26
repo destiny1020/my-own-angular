@@ -14,7 +14,77 @@ var ESCAPES = {
 var OPERATORS = {
     "null": _.constant(null),
     "true": _.constant(true),
-    "false": _.constant(false)
+    "false": _.constant(false),
+
+    // arithmetic operators
+    "+": function(self, locals, a, b) {
+        a = a(self, locals);
+        b = b(self, locals);
+        if(!_.isUndefined(a)) {
+            if(!_.isUndefined(b)) {
+                // when both a and b are defined
+                return a + b;
+            } else {
+                // when b is undefined
+                return a;
+            }
+        }
+
+        // when a is undefined
+        return b;
+    },
+    "!": function(self, locals, a) {
+        return !a(self, locals);
+    },
+    "-": function(self, locals, a, b) {
+        a = a(self, locals);
+        b = b(self, locals);
+        return (_.isUndefined(a) ? 0 : a) - (_.isUndefined(b) ? 0 : b);
+    },
+    "*": function(self, locals, a, b) {
+        return a(self, locals) * b(self, locals);
+    },
+    "/": function(self, locals, a, b) {
+        return a(self, locals) / b(self, locals);
+    },
+    "%": function(self, locals, a, b) {
+        return a(self, locals) % b(self, locals);
+    },
+
+    // equality and comparisons
+    "<": function(self, locals, a, b) {
+        return a(self, locals) < b(self, locals);
+    },
+    ">": function(self, locals, a, b) {
+        return a(self, locals) > b(self, locals);
+    },
+    "<=": function(self, locals, a, b) {
+        return a(self, locals) <= b(self, locals);
+    },
+    ">=": function(self, locals, a, b) {
+        return a(self, locals) >= b(self, locals);
+    },
+    "==": function(self, locals, a, b) {
+        return a(self, locals) == b(self, locals);
+    },
+    "!=": function(self, locals, a, b) {
+        return a(self, locals) != b(self, locals);
+    },
+    "===": function(self, locals, a, b) {
+        return a(self, locals) === b(self, locals);
+        },
+    "!==": function(self, locals, a, b) {
+        return a(self, locals) !== b(self, locals);
+    },
+    "=": _.noop,
+
+    // logical operators
+    "&&": function(self, locals, a, b) {
+        return a(self, locals) && b(self, locals);
+        },
+    "||": function(self, locals, a, b) {
+        return a(self, locals) || b(self, locals);
+    }
 };
 
 var CALL = Function.prototype.call;
@@ -53,7 +123,7 @@ Lexer.prototype.lex = function(text) {
             this.readNumber();
         } else if(this.is("'\"")){
             this.readString(this.ch);
-        } else if(this.is("[],{}:.()=")) {
+        } else if(this.is("[],{}:.()?;")) {
             // no fn correlated with the token
             this.tokens.push({
                 text: this.ch,
@@ -66,7 +136,33 @@ Lexer.prototype.lex = function(text) {
             // just move forward
             this.index++;
         } else {
-            throw "Unexpected next character: " + this.ch;
+            // emit operator token
+            var ch2 = this.ch + this.peek();
+            var ch3 = this.ch + this.peek() + this.peek(2);
+            var fn = OPERATORS[this.ch];
+            var fn2 = OPERATORS[ch2];
+            var fn3 = OPERATORS[ch3];
+            if(fn3) {
+                this.tokens.push({
+                    text: ch3,
+                    fn: fn3
+                });
+                this.index += 3;
+            } else if(fn2) {
+                this.tokens.push({
+                    text: ch2,
+                    fn: fn2
+                });
+                this.index += 2;
+            } else if(fn) {
+                this.tokens.push({
+                    text: this.ch,
+                    fn: fn
+                });
+                this.index++;
+            } else {
+                throw "Unexpected next character: " + this.ch;
+            }
         }
     }
 
@@ -352,9 +448,11 @@ var generatedGetterFn = function(keys) {
     /* jshint +W054 */
 };
 
-Lexer.prototype.peek = function() {
-    return this.index < this.text.length - 1 ? 
-        this.text.charAt(this.index + 1) :
+Lexer.prototype.peek = function(n) {
+    // init n to 1 if undefined
+    n = n || 1;
+    return this.index + n < this.text.length ? 
+        this.text.charAt(this.index + n) :
         false;
 };
 
@@ -381,17 +479,23 @@ function Parser(lexer) {
     this.lexer = lexer;
 }
 
+Parser.ZERO = _.extend(_.constant(0), {constant: true});
+
 Parser.prototype.parse = function(text) {
     // tokenize the text
     this.tokens = this.lexer.lex(text);
-    return this.assignment();
+    return this.statements();
 };
 
 Parser.prototype.primary = function() {
     var primary;
 
     // beginning token
-    if(this.expect("[")) {
+    if(this.expect("(")) {
+        // start a new precedence chain inside the parentheses
+        primary = this.assignment();
+        this.consume(")");
+    } else if(this.expect("[")) {
         primary = this.arrayDeclaration();
     } else if(this.expect("{")) {
         primary = this.object();
@@ -584,17 +688,148 @@ Parser.prototype.object = function() {
     return objectFn;
 };
 
+// assignment --> multiplicative --> unary --> primary
 Parser.prototype.assignment = function() {
-    var left = this.primary();
+    var left = this.ternary();
     if(this.expect("=")) {
         if(!left.assign) {
             throw "Assignment cannot be done since operator is not assignable";
         }
-        var right = this.primary();
+        var right = this.ternary();
         return function(scope, locals) {
             return left.assign(scope, right(scope, locals), locals);
         };
     }
 
     return left;
+};
+
+// falls back on primary for everything other than unary operators
+Parser.prototype.unary = function() {
+    var parser = this;
+    var operator;
+    var operand;
+    if(this.expect("+")) {
+        return this.primary();
+    } else if((operator = this.expect("!"))) {
+        operand = parser.unary();
+        var unaryFn = function(self, locals) {
+            return operator.fn(self, locals, operand);
+        };
+        // keep the constant attr
+        unaryFn.constant = operand.constant;
+        return unaryFn;
+    } else if((operator = this.expect("-"))) {
+        operand = parser.unary();
+        return this.binaryFn(Parser.ZERO, operator.fn, operand);
+    } else {
+        return this.primary();
+    }
+};
+
+Parser.prototype.multiplicative = function() {
+    var left = this.unary();
+    var operator;
+    // process concecutive multiplicatives
+    while((operator = this.expect("*", "/", "%"))) {
+        left = this.binaryFn(left, operator.fn, this.unary());
+    }
+    return left;
+};
+
+Parser.prototype.additive = function() {
+    var left = this.multiplicative();
+    var operator;
+    // process concecutive additives
+    while((operator = this.expect("+", "-"))) {
+        left = this.binaryFn(left, operator.fn, this.multiplicative());
+    }
+    return left;
+};
+
+Parser.prototype.relational = function() {
+    var left = this.additive();
+    var operator;
+    // process concecutive relationals
+    while((operator = this.expect("<", ">", "<=", ">="))) {
+        left = this.binaryFn(left, operator.fn, this.additive());
+    }
+    return left;
+};
+
+Parser.prototype.equality = function() {
+    var left = this.relational();
+    var operator;
+    // process concecutive relationals
+    while((operator = this.expect("==", "!=", "===", "!=="))) {
+        left = this.binaryFn(left, operator.fn, this.relational());
+    }
+    return left;
+};
+
+Parser.prototype.logicalAND = function() {
+    var left = this.equality();
+    var operator;
+    while ((operator = this.expect("&&"))) {
+        left = this.binaryFn(left, operator.fn, this.equality());
+    }
+    return left;
+};
+
+Parser.prototype.logicalOR = function() {
+    var left = this.logicalAND();
+    var operator;
+    while ((operator = this.expect("||"))) {
+        left = this.binaryFn(left, operator.fn, this.logicalAND());
+    }
+    return left;
+};
+
+Parser.prototype.ternary = function() {
+    var left = this.logicalOR();
+    if(this.expect("?")) {
+        // recursively
+        var middle = this.ternary();
+        this.consume(":");
+        // recursively
+        var right = this.ternary();
+
+        var ternaryFn = function(self, locals) {
+            return left(self, locals) ? middle(self, locals) : right(self, locals);
+        };
+        ternaryFn.constant = left.constant && middle.constant && right.constant;
+        return ternaryFn;
+    } else {
+        return left;
+    }
+};
+
+Parser.prototype.binaryFn = function(left, op, right) {
+    var fn = function(self, locals) {
+        return op(self, locals, left, right);
+    };
+    fn.constant = left.constant && right.constant;
+
+    return fn;
+};
+
+Parser.prototype.statements = function() {
+    var statements = [];
+    do {
+        statements.push(this.assignment());
+    } while(this.expect(";"));
+
+    if(statements.length === 1) {
+        return statements[0];
+    } else {
+        return function(self, locals) {
+            var value;
+            _.forEach(statements, function(statement) {
+                value = statement(self, locals);
+            });
+
+            // return the last expr's value
+            return value;
+        };
+    }
 };
