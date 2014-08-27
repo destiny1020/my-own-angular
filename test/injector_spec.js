@@ -460,6 +460,7 @@ describe("injector", function() {
                 this.$get = function() { return value; };
             });
 
+            // since provider will seek other provider dependencies in providerCache, so this should be named as aProvider
             module.provider("b", function BProvider(aProvider) {
                 aProvider.setValue(2);
                 this.$get = function() { };
@@ -495,6 +496,8 @@ describe("injector", function() {
                 this.$get = function() { return 1; };
             });
 
+            // since aProvider will be seeked in the instance cache, the name should be a rather than aProvider
+            // this is correct: this.$get = function(a) { return a; };
             module.provider("b", function BProvider() {
                 this.$get = function(aProvider) { return aProvider.$get(); };
             });
@@ -516,8 +519,23 @@ describe("injector", function() {
             var injector = createInjector(["myModule"]);
 
             expect(function() {
+                // since the injector will seek dependency in instance cache, the argument should be a rather than aProvider
                 injector.invoke(function(aProvider){ });
             }).toThrow();
+        });
+
+        it("corrects the 'does not inject a provider to invoke'", function() {
+            var module = angular.module("myModule", []);
+
+            module.provider("a", function AProvider() {
+                this.$get = function() {
+                    return 1;
+                };
+            });
+
+            var injector = createInjector(["myModule"]);
+
+            expect(injector.invoke(function(a, b){ return a + b; }, null, {b: 3})).toBe(4);
         });
 
         it("does not give access to providers through get", function() {
@@ -530,6 +548,9 @@ describe("injector", function() {
             var injector = createInjector(["myModule"]);
 
             expect(function() {
+                // reason as above, first seek the instance cache, 
+                // then a suffix "Provider" will be appended and seek for provider cache
+                // while "aProviderProvider" is not exist
                 injector.get("aProvider");
             }).toThrow();
         });

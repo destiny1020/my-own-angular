@@ -77,9 +77,6 @@ describe("setupModuleLoader", function() {
             }).toThrow();
         });
 
-        // injector
-        
-
     });
 
 });
