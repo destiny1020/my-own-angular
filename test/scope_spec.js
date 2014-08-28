@@ -1,5 +1,4 @@
 /* jshint globalstrict: true */
-// will fix this global Scope issue after implementing DI
 /* global publishExternalAPI: false, createInjector: false */
 "use strict";
 

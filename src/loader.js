@@ -42,6 +42,7 @@ function setupModuleLoader(window) {
             service: invokeLater("$provide", "service"),
             // the config function is invoked by the providerInjector
             config: invokeLater("$injector", "invoke"),
+            directive: invokeLater("$compileProvider", "directive"),
             run: function(fn) {
                 moduleInstance._runBlocks.push(fn);
                 return moduleInstance;
