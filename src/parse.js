@@ -1,6 +1,24 @@
 /* jshint globalstrict: true */
 "use strict";
 
+function $ParseProvider() {
+    this.$get = function() {
+        // return a function for parsing
+        return function(expr) {
+            switch(typeof expr) {
+                case "string":
+                    var lexer = new Lexer();
+                    var parser = new Parser(lexer);
+                    return parser.parse(expr);
+                case "function":
+                    return expr;
+                default:
+                    return _.noop;
+            }
+        };
+    };
+}
+
 var ESCAPES = {
     "n": "\n",
     "f": "\f",

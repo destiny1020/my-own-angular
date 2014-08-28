@@ -1,9 +1,16 @@
 /* jshint globalstrict: true */
 // will fix this global parse issue after implementing DI
-/* global parse: false */
+/* global publishExternalAPI: false, createInjector: false */
 "use strict";
 
 describe("parse", function() {
+
+    var parse;
+
+    beforeEach(function() {
+        publishExternalAPI();
+        parse = createInjector(["ng"]).get("$parse");
+    });
 
     it("can parse an integer", function() {
         var fn = parse("42");
