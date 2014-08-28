@@ -1,5 +1,5 @@
 /* jshint globalstrict: true */
-/* global setupModuleLoader: false, angular: false, $ParseProvider: false */
+/* global setupModuleLoader: false, angular: false, $ParseProvider: false, $RootScopeProvider: false */
 "use strict";
 
 function publishExternalAPI() {

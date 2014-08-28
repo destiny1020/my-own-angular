@@ -1,16 +1,9 @@
 /* jshint globalstrict: true */
 // will fix this global Scope issue after implementing DI
-/* global Scope: false */
+/* global publishExternalAPI: false, createInjector: false */
 "use strict";
 
 describe("Scope", function() {
-
-    it("can be constructed and used as object", function() {
-        var scope = new Scope();
-        scope.aProperty = 1;
-
-        expect(scope.aProperty).toBe(1);
-    });
 
     // sub test suite for the digest feature
     describe("digest", function() {
@@ -18,7 +11,8 @@ describe("Scope", function() {
         var scope;
 
         beforeEach(function() {
-            scope = new Scope();
+            publishExternalAPI();
+            scope = createInjector(["ng"]).get("$rootScope");
         });
 
         it("calls the listener function of a watch on first $digest", function() {
@@ -656,8 +650,13 @@ describe("Scope", function() {
 
     describe("inheritance", function() {
 
+        var parent;
+        beforeEach(function() {
+            publishExternalAPI();
+            parent = createInjector(["ng"]).get("$rootScope");
+        });
+
         it("inherits the parent prop", function() {
-            var parent = new Scope();
             parent.aValue = [1, 2, 3];
 
             var child = parent.$new();
@@ -666,8 +665,6 @@ describe("Scope", function() {
         });
 
         it("parent cannot access to prop on child", function() {
-            var parent = new Scope();
-
             var child = parent.$new();
             child.aValue = [1, 2, 3];
 
@@ -675,7 +672,6 @@ describe("Scope", function() {
         });
 
         it("inherits from parent prop when defined", function() {
-            var parent = new Scope();
             var child = parent.$new();
 
             parent.aValue = [1, 2, 3];
@@ -683,7 +679,6 @@ describe("Scope", function() {
         });
 
         it("change the prop on parent from child", function() {
-            var parent = new Scope();
             var child = parent.$new();
 
             parent.aValue = [1, 2, 3];
@@ -694,7 +689,6 @@ describe("Scope", function() {
         });
 
         it("watch a prop on parent from child", function() {
-            var parent = new Scope();
             var child = parent.$new();
 
             parent.aValue = [1, 2, 3];
@@ -719,7 +713,7 @@ describe("Scope", function() {
         });
 
         it("can be nested at any depth", function() {
-            var a = new Scope();
+            var a = parent;
             var aa = a.$new();
             var aaa = aa.$new();
             var aab = aa.$new();
@@ -738,7 +732,6 @@ describe("Scope", function() {
         });
 
         it("shadows a parent's prop by child", function() {
-            var parent = new Scope();
             var child = parent.$new();
 
             parent.name = "Joe";
@@ -749,7 +742,6 @@ describe("Scope", function() {
         });
 
         it("does not shadow since it is using object", function() {
-            var parent = new Scope();
             var child = parent.$new();
 
             parent.user = {name: "Joe"};
@@ -761,7 +753,6 @@ describe("Scope", function() {
 
         // digest related
         it("does not digest its parent", function() {
-            var parent = new Scope();
             var child = parent.$new();
 
             parent.aValue = "abc";
@@ -778,7 +769,6 @@ describe("Scope", function() {
 
         // recursive digesting
         it("keep refs to children", function() {
-            var parent = new Scope();
             var child1 = parent.$new();
             var child2 = parent.$new();
             var child21 = child2.$new();
@@ -794,7 +784,6 @@ describe("Scope", function() {
         });
 
         it("digests children", function() {
-            var parent = new Scope();
             var child = parent.$new();
 
             parent.aValue = "abc";
@@ -812,7 +801,6 @@ describe("Scope", function() {
 
         // digesting the whole tree from $apply and $evalAsync
         it("digests from root when calling $apply", function() {
-            var parent = new Scope();
             var child = parent.$new();
             var child2 = child.$new();
 
@@ -832,7 +820,6 @@ describe("Scope", function() {
         });
 
         it("schedules a digest from root by $evalAsync", function(done) {
-            var parent = new Scope();
             var child = parent.$new();
             var child2 = child.$new();
 
@@ -855,7 +842,6 @@ describe("Scope", function() {
 
         // isolated scope related
         it("does not have access to parent prop when isolated", function() {
-            var parent = new Scope();
             var child = parent.$new(true);
 
             parent.aValue = "abc";
@@ -863,7 +849,6 @@ describe("Scope", function() {
         });
 
         it("cannot watch parent prop when isolated", function() {
-            var parent = new Scope();
             var child = parent.$new(true);
 
             parent.aValue = "abc";
@@ -879,7 +864,6 @@ describe("Scope", function() {
         });
 
         it("digests its isolated children", function() {
-            var parent = new Scope();
             var child = parent.$new(true);
 
             child.aValue = "abc";
@@ -896,7 +880,6 @@ describe("Scope", function() {
 
         // $apply always trigger digest on root scope
         it("digests from root on $apply when isolated", function() {
-            var parent = new Scope();
             var child = parent.$new(true);
             var child2 = child.$new();
 
@@ -915,7 +898,6 @@ describe("Scope", function() {
 
         // $evalAsync always trigger digest on root scope
         it("schedules a digest from root on $evalAsync when isolated", function(done) {
-            var parent = new Scope();
             var child = parent.$new(true);
             var child2 = child.$new();
 
@@ -938,7 +920,6 @@ describe("Scope", function() {
 
         // $evalAsync always trigger digest on root scope
         it("executes $evalAsync functions on isolated scopes", function(done) {
-            var parent = new Scope();
             var child = parent.$new(true);
 
             child.$evalAsync(function(scope) {
@@ -952,7 +933,6 @@ describe("Scope", function() {
         });
 
         it("executes $$postDigest functions on isolated scopes", function() {
-            var parent = new Scope();
             var child = parent.$new(true);
             
             child.$$postDigest(function() {
@@ -964,7 +944,6 @@ describe("Scope", function() {
 
         // destroy related
         it("is no longer digested when $destroy has been called", function() {
-            var parent = new Scope();
             var child = parent.$new();
 
             child.aValue = [1, 2, 3];
@@ -996,10 +975,11 @@ describe("Scope", function() {
 
     // watch collection
     describe("$watchCollection", function() {
-        var scope;
 
+        var scope;
         beforeEach(function() {
-            scope = new Scope();
+            publishExternalAPI();
+            scope = createInjector(["ng"]).get("$rootScope");
         });
 
         it("works like a normal $watch for non-collection", function() {
@@ -1452,7 +1432,8 @@ describe("Scope", function() {
         var isolatedChild;
 
         beforeEach(function() {
-            parent = new Scope();
+            publishExternalAPI();
+            parent = createInjector(["ng"]).get("$rootScope");
             scope = parent.$new();
             child = scope.$new();
             isolatedChild = scope.$new(true);
@@ -1802,7 +1783,8 @@ describe("Scope", function() {
         var scope;
 
         beforeEach(function() {
-            scope = new Scope();
+            publishExternalAPI();
+            scope = createInjector(["ng"]).get("$rootScope");
         });
 
         it("accepts expr for watch function", function() {
@@ -1857,6 +1839,43 @@ describe("Scope", function() {
         it("accepts expr in $evalAsync", function(done) {
             scope.$evalAsync("42");
             scope.$$postDigest(done);
+        });
+
+    });
+
+    describe("TTL configurability", function() {
+
+        beforeEach(function() {
+            publishExternalAPI();
+        });
+
+        it("allows configuring a shorter TTL", function() {
+            var injector = createInjector(["ng", function($rootScopeProvider) {
+                $rootScopeProvider.digestTtl(5);
+            }]);
+
+            var scope = injector.get("$rootScope");
+
+            scope.counterA = 0;
+            scope.counterB = 0;
+
+            scope.$watch(
+                function(scope) { return scope.counterA; },
+                function(newValue, oldValue, scope) {
+                    if(scope.counterB < 5) {
+                        scope.counterB++;
+                    }
+                }
+            );
+
+            scope.$watch(
+                function(scope) { return scope.counterB; },
+                function(newValue, oldValue, scope) {
+                    scope.counterA++;
+                }
+            );
+
+            expect(function() { scope.$digest(); }).toThrow();
         });
 
     });
