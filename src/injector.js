@@ -1,5 +1,5 @@
 /* jshint globalstrict: true */
-/* global angular: false */
+/* global angular: false, HashMap: false */
 "use strict";
 
 // exposed API:
@@ -16,24 +16,27 @@ function createInjector(modulesToLoad) {
     // for caching dependency instances
     var instanceCache = {};
     // backup is the providerInjector
-    var instanceInjector = createInternalInjector(instanceCache, function(name) {
+    // put the instance injector into cache as well
+    var instanceInjector = instanceCache.$injector = createInternalInjector(instanceCache, function(name) {
         var provider = providerInjector.get(name + "Provider");
         return instanceInjector.invoke(provider.$get, provider);
     });
 
     var providerCache = {};
     // no backup, failed on not found
-    var providerInjector = createInternalInjector(providerCache, function() {
+    // put the provider injector into cache as well
+    var providerInjector = providerCache.$injector = createInternalInjector(providerCache, function() {
         throw "Unknown Provider: " + path.join(" <- ");
     });
 
-    var loadedModules = {};
+    var loadedModules = new HashMap();
 
     // store the dependency resolution path
     var path = [];
 
     // used to resolve the constant and provider
-    var $provide = {
+    // put it into the provider cache
+    providerCache.$provide = {
         constant: function(key, value) {
             if(key === "hasOwnProperty") {
                 throw "hasOwnProperty is not a valid constant name";
@@ -50,6 +53,33 @@ function createInjector(modulesToLoad) {
             }
             // store the provider in cache for lazy resolution
             providerCache[key + "Provider"] = provider;
+        },
+        factory: function(key, factoryFn) {
+            // since the provider object is created on the fly, no config methods are attached
+            // so there is basically no point to access to the provider object
+            this.provider(key, {
+                $get: factoryFn
+            });
+        },
+        value: function(key, value) {
+            this.factory(key, _.constant(value));
+        },
+        service: function(key, Constructor) {
+            this.factory(key, function() {
+                // use the instance injector
+                return instanceInjector.instantiate(Constructor);
+            });
+        },
+        decorator: function(serviceName, decoratorFn) {
+            var provider = providerInjector.get(serviceName + "Provider");
+            var original$get = provider.$get;
+            provider.$get = function() {
+                // used to create the instance
+                var instance = instanceInjector.invoke(original$get, provider);
+                // modofications will be gone here
+                instanceInjector.invoke(decoratorFn, null, {$delegate: instance});
+                return instance;
+            };
         }
     };
 
@@ -142,26 +172,41 @@ function createInjector(modulesToLoad) {
         }
     }
 
+    // collect all run blocks
+    var runBlocks = [];
     // executed code when using createInjector
-    _.forEach(modulesToLoad, function loadModule(moduleName) {
+    _.forEach(modulesToLoad, function loadModule(moduleElement) {
         // avoid repetitive loading for one module
-        if(!loadedModules.hasOwnProperty(moduleName)) {
+        if(!loadedModules.get(moduleElement)) {
             // mark current module as loaded
-            loadedModules[moduleName] = true;
+            loadedModules.put(moduleElement, true);
+            if(_.isString(moduleElement)) {
 
-            // get the module instance
-            var module = angular.module(moduleName);
+                // get the module instance
+                var module = angular.module(moduleElement);
 
-            // recursively load each dependencies
-            _.forEach(module.requires, loadModule);
+                // recursively load each dependencies
+                _.forEach(module.requires, loadModule);
 
-            _.forEach(module._invokeQueue, function(invokeArgs) {
-                var method = invokeArgs[0];
-                var args = invokeArgs[1];
+                _.forEach(module._invokeQueue, function(invokeArgs) {
+                    var service = providerInjector.get(invokeArgs[0]);
+                    var method = invokeArgs[1];
+                    var args = invokeArgs[2];
 
-                $provide[method].apply($provide, args);
-            });
+                    service[method].apply(service, args);
+                });
+
+                runBlocks = runBlocks.concat(module._runBlocks);
+            } else if(_.isFunction(moduleElement) || _.isArray(moduleElement)) {
+                // when the module is provided as function module or used array-style
+                runBlocks.push(providerInjector.invoke(moduleElement));
+            }
         }
+    });
+
+    // _.compact will remove all undefined entries
+    _.forEach(_.compact(runBlocks), function(runBlock) {
+        instanceInjector.invoke(runBlock);
     });
 
     return instanceInjector;

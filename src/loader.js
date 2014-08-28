@@ -14,17 +14,18 @@ function setupModuleLoader(window) {
     var angular = ensure(window, "angular", Object);
 
     // will not check whether the module with name is already existed or not, just override
-    var createModule = function(name, requires, modules) {
+    var createModule = function(name, requires, modules, configFn) {
         // check module name validity
         if(name === "hasOwnProperty") {
             throw "hasOwnProperty is not a valid module name";
         }
 
         // choose the method to operate on the invoke queue
-        var invokeLater = function(method, arrayMethod) {
+        var invokeLater = function(service, method, arrayMethod) {
             // this returned function will be invoked when registering constant or provider
             return function() {
-                moduleInstance._invokeQueue[arrayMethod || "push"]([method, arguments]);
+                var item = [service, method, arguments];
+                moduleInstance._invokeQueue[arrayMethod || "push"](item);
                 // to support chaining
                 return moduleInstance;
             };
@@ -34,11 +35,25 @@ function setupModuleLoader(window) {
         var moduleInstance = {
             name: name,
             requires: requires,
-            constant: invokeLater("constant", "unshift"),
-            provider: invokeLater("provider"),
+            constant: invokeLater("$provide", "constant", "unshift"),
+            provider: invokeLater("$provide", "provider"),
+            factory: invokeLater("$provide", "factory"),
+            value: invokeLater("$provide", "value"),
+            service: invokeLater("$provide", "service"),
+            // the config function is invoked by the providerInjector
+            config: invokeLater("$injector", "invoke"),
+            run: function(fn) {
+                moduleInstance._runBlocks.push(fn);
+                return moduleInstance;
+            },
             // this array will be processed when calling createInjector([module_name])
-            _invokeQueue: []
+            _invokeQueue: [],
+            _runBlocks: []
         };
+
+        if(configFn) {
+            moduleInstance.config(configFn);
+        }
 
         // store the module instance
         modules[name] = moduleInstance;
@@ -62,9 +77,9 @@ function setupModuleLoader(window) {
         // receives two parameters
         // 1. module's name
         // 2. module's dependencies
-        return function(name, requires) {
+        return function(name, requires, configFn) {
             if(requires) {
-                return createModule(name, requires, modules);
+                return createModule(name, requires, modules, configFn);
             } else {
                 return getModule(name, modules);
             }
