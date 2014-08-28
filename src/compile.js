@@ -29,9 +29,52 @@ function $CompileProvider($provide) {
         }
     };
 
-    this.$get = function() {
+    this.$get = ["$injector", function($injector) {
 
-    };
+        function compile($compileNodes) {
+            return compileNodes($compileNodes);
+        }
+
+        function compileNodes($compileNodes) {
+            _.forEach($compileNodes, function(node) {
+                var directives = collectDirectives(node);
+                applyDirectivesToNode(directives, node);
+            });
+        }
+
+        function applyDirectivesToNode(directives, compileNode) {
+            var $compileNode = $(compileNode);
+            _.forEach(directives, function(directive) {
+                if(directive.compile) {
+                    directive.compile($compileNode);
+                }
+            });
+        }
+
+        function collectDirectives(node) {
+            var directives = [];
+            var normalizedNodeName = _.camelCase(nodeName(node).toLowerCase());
+            addDirective(directives, normalizedNodeName);
+
+            return directives;
+        }
+
+        // element: a raw DOM node or a jQuery-wrapped one
+        function nodeName(element) {
+            return element.nodeName ? element.nodeName : element[0].nodeName;
+        }
+
+        function addDirective(directives, name) {
+            // seek the factory by directive's name
+            if(hasDirectives.hasOwnProperty(name)) {
+                // TODO: why using "apply" to concat the returned array to directives
+                // directly modify the passed in directives, no need to return explicitly
+                directives.push.apply(directives, $injector.get(name + "Directive"));
+            }
+        }
+
+        return compile;
+    }];
 
     $CompileProvider.$inject = ["$provide"];
 

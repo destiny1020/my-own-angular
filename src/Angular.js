@@ -12,5 +12,12 @@ _.mixin({
         // TODO: how to deal with length === 0 such as {length: 0, otherKey: "a"}
         return length === 0 || 
             (_.isNumber(length) && length > 0 && (length - 1) in obj);
+    },
+
+    camelCase: function(name) {
+        return name.replace(/([\:\-\_]+(.))/g,
+            function(match, separator, letter, offset) {
+                return offset > 0 ? letter.toUpperCase() : letter;
+            });
     }
 });
