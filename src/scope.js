@@ -15,14 +15,19 @@ function $RootScopeProvider() {
     this.$get = ["$parse", function($parse) {
 
         function Scope() {
+            // TODO: define the uid for scope
             this.$$watchers = [];
             this.$$lastDirtyWatch = null;
             this.$$asyncQueue = [];
             this.$$phase = null;
             this.$$postDigestQueue = [];
+            // in real angular, the children are organized in a linked list
+            // using $$nextSibling, $$prevSibling, $$childHead and $$childTail
             this.$$children = [];
             this.$$root = this;
             this.$$listeners = {};
+
+            // TODO: define the isolated bindings and apply async queue
         }
 
         // to make sure the value 'last' is not equal to any other value
@@ -181,6 +186,7 @@ function $RootScopeProvider() {
             return $parse(expr)(this, locals);
         };
 
+        // TODO: define the $applyAsync
         Scope.prototype.$apply = function(expr) {
             try {
                 // set current phase into apply
@@ -289,6 +295,7 @@ function $RootScopeProvider() {
             }
         };
 
+        // TODO: define the $watchGroup method as well
         Scope.prototype.$watchCollection = function(watchFn, listenerFn) {
             var self = this;
             var newValue, oldValue;

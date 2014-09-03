@@ -48,6 +48,12 @@ function setupModuleLoader(window) {
                 return moduleInstance;
             },
             // this array will be processed when calling createInjector([module_name])
+            // the elements in this array are like:
+            // [
+            //      ["$provide", "factory", actual_arguments],
+            //      ["$injector", "invoke", actual_arguments],
+            //      ...
+            // ]
             _invokeQueue: [],
             _runBlocks: []
         };

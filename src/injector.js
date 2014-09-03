@@ -15,6 +15,7 @@ function createInjector(modulesToLoad) {
 
     // for caching dependency instances
     var instanceCache = {};
+
     // backup is the providerInjector
     // put the instance injector into cache as well
     var instanceInjector = instanceCache.$injector = createInternalInjector(instanceCache, function(name) {
@@ -34,9 +35,10 @@ function createInjector(modulesToLoad) {
     // store the dependency resolution path
     var path = [];
 
-    // used to resolve the constant and provider
-    // put it into the provider cache
+    // used to resolve the constant, provider and other commands
+    // put $provide itself into the provider cache
     providerCache.$provide = {
+        // constant are always stored in both INSTANCE and PROVIDER cache
         constant: function(key, value) {
             if(key === "hasOwnProperty") {
                 throw "hasOwnProperty is not a valid constant name";
@@ -47,7 +49,7 @@ function createInjector(modulesToLoad) {
         provider: function(key, provider) {
             if(_.isFunction(provider)) {
                 // when the given provider is a function
-                // NO CACHE ! will be resolved at once and stored in cache
+                // it will be resolved at once and stored in cache
                 // so the providerCache should always store instance of provider
                 provider = providerInjector.instantiate(provider);
             }
@@ -57,14 +59,17 @@ function createInjector(modulesToLoad) {
         factory: function(key, factoryFn) {
             // since the provider object is created on the fly, no config methods are attached
             // so there is basically no point to access to the provider object
+            // it is built upon the provider mechanism
             this.provider(key, {
                 $get: factoryFn
             });
         },
         value: function(key, value) {
+            // it is built upon the factory mechanism, which built upon the provider
             this.factory(key, _.constant(value));
         },
         service: function(key, Constructor) {
+            // it is built upon the factory mechanism, which built upon the provider
             this.factory(key, function() {
                 // use the instance injector
                 return instanceInjector.instantiate(Constructor);
@@ -73,10 +78,12 @@ function createInjector(modulesToLoad) {
         decorator: function(serviceName, decoratorFn) {
             var provider = providerInjector.get(serviceName + "Provider");
             var original$get = provider.$get;
+            // decorate on the provider's $get
             provider.$get = function() {
                 // used to create the instance
                 var instance = instanceInjector.invoke(original$get, provider);
-                // modofications will be gone here
+                // modifications will be gone here
+                // decoratorFn could be any function which follows the injection rules
                 instanceInjector.invoke(decoratorFn, null, {$delegate: instance});
                 return instance;
             };
@@ -119,7 +126,7 @@ function createInjector(modulesToLoad) {
             return instance;
         }
 
-        // 1. resolve the dependencies
+        // 1. resolve the dependencies by annotate()
         // 2. invoke the function with real dependencies
         // 3. return the result of the func
         function invoke(fn, context, locals) {
@@ -152,6 +159,11 @@ function createInjector(modulesToLoad) {
         };
     }
 
+    // can handle below situations:
+    // 1. when the argument is an array, the result of _.initial(array) is the dependencies, the resulf of _.last(array) is the real fn
+    // 2. if an $inject object is defined on the fn, then it will be used as the dependency array
+    // 3. if fn has no declared argument, then return an empty array as the dependency array
+    // 4. try to parse the function's source code to get the declared arguments as the dependencies
     function annotate(fn) {
         if(_.isArray(fn)) {
             // when using the array-style
